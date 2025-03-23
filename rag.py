@@ -3,7 +3,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.utils import filter_complex_metadata
 from langchain_groq import ChatGroq
-from langchain_openai import OpenAIEmbeddings
+from langchain_groq import GroqEmbeddings  # Cambiado a GroqEmbeddings
 from langchain.prompts import PromptTemplate
 from langchain.schema.runnable import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
@@ -28,17 +28,17 @@ class ChatPDF:
             st.error("No se encontró la API key de Groq. Por favor configúrela como variable de entorno.")
             st.stop()
             
-        # Inicializar el modelo de Groq (llama3-8b-8192 es similar a llama3.2)
+        # Inicializar el modelo de Groq
         self.model = ChatGroq(
             model="llama3-8b-8192",
             groq_api_key=api_key,
             temperature=0.1
         )
         
-        # Inicializar el modelo de embeddings (usando OpenAI para compatibilidad)
-        self.embeddings = OpenAIEmbeddings(
-            model="text-embedding-ada-002",
-            openai_api_key=api_key
+        # Inicializar el modelo de embeddings usando Groq
+        self.embeddings = GroqEmbeddings(
+            model="text-embedding-groq-model",  # Cambia esto al modelo de embeddings de Groq que corresponda
+            groq_api_key=api_key
         )
         
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=200)
@@ -67,7 +67,7 @@ class ChatPDF:
         return filter_complex_metadata(chunks)
 
     def crear_vector_db(self, chunks):
-        """Crea la base de datos vectorial a partir de los 'chunks' usando FAISS en lugar de Chroma"""
+        """Crea la base de datos vectorial a partir de los 'chunks' usando FAISS"""
         self.vector_db = FAISS.from_documents(
             documents=chunks,
             embedding=self.embeddings
@@ -140,7 +140,6 @@ def mostrar_mensajes():
 def procesar_entrada():
     # Si hay alguna entrada ingresada y si esta contiene texto (y no sólo espacios en blanco)
     if st.session_state["user_input"] and len(st.session_state["user_input"].strip()) > 0:
-        # Extraer texto ingresado por el usuario (eliminando espacios)
         user_text = st.session_state["user_input"].strip()
 
         # Presentar texto al modelo y mostrar ícono indicando al usuario que se está procesando la info
@@ -148,8 +147,8 @@ def procesar_entrada():
             agent_text = st.session_state["assistant"].preguntar(user_text)
 
         # Añadir mensajes al historial
-        st.session_state["messages"].append((user_text, True)) # True: el mensaje es del usuario
-        st.session_state["messages"].append((agent_text, False)) # False: el mensaje es del asistente
+        st.session_state["messages"].append((user_text, True))  # True: el mensaje es del usuario
+        st.session_state["messages"].append((agent_text, False))  # False: el mensaje es del asistente
 
         # Limpiar la entrada del usuario después de procesarla
         st.session_state["user_input"] = ""
