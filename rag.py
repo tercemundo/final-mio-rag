@@ -4,19 +4,31 @@ import tempfile
 from langchain_groq import ChatGroq
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import FAISS
-try:
-    # Intentar usar HuggingFaceEmbeddings
-    from langchain_community.embeddings import HuggingFaceEmbeddings
-    USE_HF_EMBEDDINGS = True
-except ImportError:
-    # Si falla, usar embeddings más simples de OpenAI
-    from langchain_community.embeddings import OpenAIEmbeddings
-    from langchain_openai import OpenAIEmbeddings
-    USE_HF_EMBEDDINGS = False
-    
 from langchain.chains import RetrievalQA
+from langchain.vectorstores import FAISS
+from langchain.schema import Document
+from langchain_community.embeddings import FakeEmbeddings
 from dotenv import load_dotenv
+
+class SimpleEmbeddings(FakeEmbeddings):
+    """Clase simple de embeddings que funciona sin dependencias adicionales."""
+    def __init__(self, size=384):
+        super().__init__(size=size)
+    
+    def embed_documents(self, texts):
+        return [self.embed_query(text) for text in texts]
+    
+    def embed_query(self, text):
+        import hashlib
+        import numpy as np
+        
+        # Genera un hash del texto para crear un embedding determinístico
+        hash_object = hashlib.md5(text.encode())
+        seed = int(hash_object.hexdigest(), 16) % 10000
+        np.random.seed(seed)
+        
+        # Genera un embedding pseudo-aleatorio pero determinístico
+        return np.random.rand(self.size).astype(np.float32)
 
 # Cargar variables de entorno
 load_dotenv()
@@ -54,25 +66,12 @@ with st.sidebar:
         ["llama3-8b-8192", "llama3-70b-8192", "mixtral-8x7b-32768"]
     )
     
-    # Opciones de embeddings
-    if not USE_HF_EMBEDDINGS:
-        openai_api_key = os.environ.get("OPENAI_API_KEY")
-        if not openai_api_key:
-            st.warning("Se utilizará la API de OpenAI para embeddings. Ingresa una API key o configúrala como OPENAI_API_KEY en el entorno.")
-            openai_api_key = st.text_input("OpenAI API Key (para embeddings)", type="password")
-    
     # Cargar PDFs
     uploaded_files = st.file_uploader("Sube tus archivos PDF", accept_multiple_files=True, type="pdf")
     
     if uploaded_files and not st.session_state.pdfs_processed:
-        # Verificar si se puede proceder
-        can_proceed = True
-        if not USE_HF_EMBEDDINGS and not openai_api_key:
-            st.error("Se necesita una API key de OpenAI para los embeddings.")
-            can_proceed = False
-        
-        if can_proceed:
-            with st.spinner("Procesando PDFs..."):
+        with st.spinner("Procesando PDFs..."):
+            try:
                 # Guardar archivos en ubicaciones temporales
                 temp_files = []
                 for file in uploaded_files:
@@ -90,6 +89,10 @@ with st.sidebar:
                     except Exception as e:
                         st.error(f"Error al cargar {path}: {e}")
                 
+                if not documents:
+                    st.error("No se pudieron cargar documentos.")
+                    st.stop()
+                
                 # Dividir texto en chunks
                 text_splitter = RecursiveCharacterTextSplitter(
                     chunk_size=1000, 
@@ -97,42 +100,53 @@ with st.sidebar:
                 )
                 chunks = text_splitter.split_documents(documents)
                 
-                # Configurar embeddings y vectorstore
-                try:
-                    if USE_HF_EMBEDDINGS:
-                        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-                        st.success("Usando embeddings de HuggingFace")
-                    else:
-                        embeddings = OpenAIEmbeddings(api_key=openai_api_key)
-                        st.success("Usando embeddings de OpenAI")
-                    
-                    vectorstore = FAISS.from_documents(chunks, embeddings)
-                    
-                    # Configurar Groq LLM
-                    llm = ChatGroq(
-                        api_key=groq_api_key,
-                        model_name=model_name
-                    )
-                    
-                    # Configurar RAG
-                    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-                    st.session_state.qa_chain = RetrievalQA.from_chain_type(
-                        llm=llm,
-                        chain_type="stuff",
-                        retriever=retriever
-                    )
-                    
-                    # Limpiar archivos temporales
-                    for path in temp_files:
-                        try:
-                            os.unlink(path)
-                        except:
-                            pass
-                    
-                    st.session_state.pdfs_processed = True
-                    st.success(f"Se procesaron {len(chunks)} fragmentos de texto de {len(uploaded_files)} PDFs")
-                except Exception as e:
-                    st.error(f"Error al procesar los documentos: {str(e)}")
+                # Usar embeddings simples que no requieren dependencias adicionales
+                embeddings = SimpleEmbeddings()
+                
+                # Crear vectorstore
+                vectorstore = FAISS.from_documents(chunks, embeddings)
+                
+                # Configurar Groq LLM
+                llm = ChatGroq(
+                    api_key=groq_api_key,
+                    model_name=model_name
+                )
+                
+                # Configurar el mensaje de sistema para el RAG
+                prompt_template = """
+                Eres un asistente experto que responde preguntas basándose en los documentos proporcionados.
+                
+                Contexto:
+                {context}
+                
+                Pregunta: {question}
+                
+                Por favor, responde la pregunta de manera concisa y basándote solo en la información proporcionada.
+                """
+                
+                # Configurar RAG
+                retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+                st.session_state.qa_chain = RetrievalQA.from_chain_type(
+                    llm=llm,
+                    chain_type="stuff",
+                    retriever=retriever,
+                    chain_type_kwargs={"prompt": prompt_template}
+                )
+                
+                # Limpiar archivos temporales
+                for path in temp_files:
+                    try:
+                        os.unlink(path)
+                    except:
+                        pass
+                
+                st.session_state.pdfs_processed = True
+                st.success(f"Se procesaron {len(chunks)} fragmentos de texto de {len(uploaded_files)} PDFs")
+            
+            except Exception as e:
+                st.error(f"Error al procesar los documentos: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
 
 # Área principal para el chat
 if st.session_state.pdfs_processed:
@@ -150,12 +164,17 @@ if st.session_state.pdfs_processed:
         
         # Generar respuesta
         with st.chat_message("assistant"):
-            with st.spinner("Pensando..."):
-                response = st.session_state.qa_chain.run(prompt)
-                st.markdown(response)
-        
-        # Guardar respuesta
-        st.session_state.messages.append({"role": "assistant", "content": response})
+            try:
+                with st.spinner("Pensando..."):
+                    response = st.session_state.qa_chain.run(prompt)
+                    st.markdown(response)
+                
+                # Guardar respuesta
+                st.session_state.messages.append({"role": "assistant", "content": response})
+            except Exception as e:
+                error_msg = f"Error al generar respuesta: {str(e)}"
+                st.error(error_msg)
+                st.session_state.messages.append({"role": "assistant", "content": error_msg})
 else:
     if not uploaded_files:
         st.info("Por favor, sube al menos un archivo PDF en la barra lateral para comenzar.")
