@@ -1,5 +1,4 @@
-# Importaciones Backend
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.utils import filter_complex_metadata
@@ -68,21 +67,18 @@ class ChatPDF:
         return filter_complex_metadata(chunks)
 
     def crear_vector_db(self, chunks):
-        """Crea la base de datos vectorial a partir de los 'chunks'"""
-        self.vector_db = Chroma.from_documents(
+        """Crea la base de datos vectorial a partir de los 'chunks' usando FAISS en lugar de Chroma"""
+        self.vector_db = FAISS.from_documents(
             documents=chunks,
-            embedding=self.embeddings,
-            persist_directory='./db'
+            embedding=self.embeddings
         )
+        # Opcionalmente guardar en disco
+        self.vector_db.save_local("faiss_index")
 
     def crear_retriever(self):
         """Crea el 'retriever' que se encargará de buscar la información requerida en el PDF"""
         self.retriever = self.vector_db.as_retriever(
-            search_type="similarity_score_threshold",
-            search_kwargs={
-                "k": 3,
-                "score_threshold": 0.3
-            }
+            search_kwargs={"k": 3}
         )
 
     def crear_chain(self):
@@ -113,6 +109,13 @@ class ChatPDF:
         self.vector_db = None
         self.retriever = None
         self.chain = None
+
+    def cargar_vector_db_si_existe(self):
+        """Carga la base de datos vectorial desde el disco si existe"""
+        if os.path.exists("faiss_index"):
+            self.vector_db = FAISS.load_local("faiss_index", self.embeddings)
+            return True
+        return False
 
 
 # ---------------------------------------------------------------------
