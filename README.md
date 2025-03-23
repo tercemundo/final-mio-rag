@@ -22,7 +22,7 @@ He creado una versión extremadamente simplificada que:
 
 ## Instrucciones de uso:
 
-1. Crea un nuevo archivo `ultra_simple_rag.py` con el código proporcionado.
+1. Crea un nuevo archivo `rag.py` con el código proporcionado.
 2. Crea un nuevo `requirements.txt` con el contenido del archivo `requirements-ultra-minimal.txt`.
 3. Instala las dependencias: 
    ```bash
