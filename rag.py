@@ -1,34 +1,11 @@
 import streamlit as st
 import os
 import tempfile
+import numpy as np
 from langchain_groq import ChatGroq
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.chains import RetrievalQA
-from langchain.vectorstores import FAISS
-from langchain.schema import Document
-from langchain_community.embeddings import FakeEmbeddings
 from dotenv import load_dotenv
-
-class SimpleEmbeddings(FakeEmbeddings):
-    """Clase simple de embeddings que funciona sin dependencias adicionales."""
-    def __init__(self, size=384):
-        super().__init__(size=size)
-    
-    def embed_documents(self, texts):
-        return [self.embed_query(text) for text in texts]
-    
-    def embed_query(self, text):
-        import hashlib
-        import numpy as np
-        
-        # Genera un hash del texto para crear un embedding determinístico
-        hash_object = hashlib.md5(text.encode())
-        seed = int(hash_object.hexdigest(), 16) % 10000
-        np.random.seed(seed)
-        
-        # Genera un embedding pseudo-aleatorio pero determinístico
-        return np.random.rand(self.size).astype(np.float32)
 
 # Cargar variables de entorno
 load_dotenv()
@@ -39,6 +16,31 @@ if not groq_api_key:
     st.error("No se encontró la API key de Groq en las variables de entorno. Por favor configúrala como GROQ_API_KEY.")
     st.stop()
 
+# Clase simple para almacenamiento y recuperación de texto
+class SimpleRetriever:
+    def __init__(self):
+        self.documents = []
+    
+    def add_documents(self, documents):
+        self.documents.extend(documents)
+    
+    def get_relevant_documents(self, query, k=3):
+        # Búsqueda básica basada en coincidencia de palabras
+        query_words = set(query.lower().split())
+        scored_docs = []
+        
+        for doc in self.documents:
+            content = doc.page_content.lower()
+            # Contar cuántas palabras de la consulta aparecen en el documento
+            word_matches = sum(1 for word in query_words if word in content)
+            # Calcular puntuación de similitud simple
+            score = word_matches / len(query_words) if query_words else 0
+            scored_docs.append((doc, score))
+        
+        # Ordenar por puntuación y devolver los k mejores
+        scored_docs.sort(key=lambda x: x[1], reverse=True)
+        return [doc for doc, _ in scored_docs[:k]]
+
 # Configurar página de Streamlit
 st.set_page_config(page_title="Chat con tus PDFs usando Groq", layout="wide")
 st.title("Chat con tus PDFs usando Groq")
@@ -47,8 +49,11 @@ st.title("Chat con tus PDFs usando Groq")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "qa_chain" not in st.session_state:
-    st.session_state.qa_chain = None
+if "retriever" not in st.session_state:
+    st.session_state.retriever = None
+
+if "llm" not in st.session_state:
+    st.session_state.llm = None
 
 if "pdfs_processed" not in st.session_state:
     st.session_state.pdfs_processed = False
@@ -100,38 +105,17 @@ with st.sidebar:
                 )
                 chunks = text_splitter.split_documents(documents)
                 
-                # Usar embeddings simples que no requieren dependencias adicionales
-                embeddings = SimpleEmbeddings()
-                
-                # Crear vectorstore
-                vectorstore = FAISS.from_documents(chunks, embeddings)
+                # Crear retriever simple
+                retriever = SimpleRetriever()
+                retriever.add_documents(chunks)
+                st.session_state.retriever = retriever
                 
                 # Configurar Groq LLM
                 llm = ChatGroq(
                     api_key=groq_api_key,
                     model_name=model_name
                 )
-                
-                # Configurar el mensaje de sistema para el RAG
-                prompt_template = """
-                Eres un asistente experto que responde preguntas basándose en los documentos proporcionados.
-                
-                Contexto:
-                {context}
-                
-                Pregunta: {question}
-                
-                Por favor, responde la pregunta de manera concisa y basándote solo en la información proporcionada.
-                """
-                
-                # Configurar RAG
-                retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-                st.session_state.qa_chain = RetrievalQA.from_chain_type(
-                    llm=llm,
-                    chain_type="stuff",
-                    retriever=retriever,
-                    chain_type_kwargs={"prompt": prompt_template}
-                )
+                st.session_state.llm = llm
                 
                 # Limpiar archivos temporales
                 for path in temp_files:
@@ -147,6 +131,36 @@ with st.sidebar:
                 st.error(f"Error al procesar los documentos: {str(e)}")
                 import traceback
                 st.code(traceback.format_exc())
+
+# Función para generar respuesta
+def generate_response(query):
+    # Obtener documentos relevantes
+    docs = st.session_state.retriever.get_relevant_documents(query, k=5)
+    
+    # Crear contexto a partir de los documentos
+    context = "\n\n".join([doc.page_content for doc in docs])
+    
+    # Crear mensaje con el contexto y la pregunta
+    system_message = """
+    Eres un asistente experto que responde preguntas basándose en los documentos proporcionados.
+    Responde de manera concisa y basándote solo en la información proporcionada.
+    Si la información necesaria no está en los documentos, indícalo claramente.
+    """
+    
+    user_message = f"""
+    Contexto de los documentos:
+    {context}
+    
+    Mi pregunta es: {query}
+    """
+    
+    # Generar respuesta
+    response = st.session_state.llm.invoke(
+        [{"role": "system", "content": system_message},
+         {"role": "user", "content": user_message}]
+    )
+    
+    return response.content
 
 # Área principal para el chat
 if st.session_state.pdfs_processed:
@@ -166,7 +180,7 @@ if st.session_state.pdfs_processed:
         with st.chat_message("assistant"):
             try:
                 with st.spinner("Pensando..."):
-                    response = st.session_state.qa_chain.run(prompt)
+                    response = generate_response(prompt)
                     st.markdown(response)
                 
                 # Guardar respuesta
