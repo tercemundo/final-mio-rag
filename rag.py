@@ -12,6 +12,12 @@ from dotenv import load_dotenv
 # Cargar variables de entorno
 load_dotenv()
 
+# Verificar API key (priorizar la del entorno)
+groq_api_key = os.environ.get("GROQ_API_KEY")
+if not groq_api_key:
+    st.error("No se encontró la API key de Groq en las variables de entorno. Por favor configúrala como GROQ_API_KEY.")
+    st.stop()
+
 # Configurar página de Streamlit
 st.set_page_config(page_title="Chat con tus PDFs usando Groq", layout="wide")
 st.title("Chat con tus PDFs usando Groq")
@@ -30,10 +36,8 @@ if "pdfs_processed" not in st.session_state:
 with st.sidebar:
     st.header("Configuración")
     
-    # API Key de Groq
-    groq_api_key = st.text_input("Groq API Key", placeholder="Ingresa tu API key de Groq", type="password")
-    if not groq_api_key and os.environ.get("GROQ_API_KEY"):
-        groq_api_key = os.environ.get("GROQ_API_KEY")
+    # Mostrar que se está usando la API key del entorno
+    st.success("Usando API key de Groq desde variables de entorno")
     
     # Seleccionar modelo
     model_name = st.selectbox(
@@ -44,7 +48,7 @@ with st.sidebar:
     # Cargar PDFs
     uploaded_files = st.file_uploader("Sube tus archivos PDF", accept_multiple_files=True, type="pdf")
     
-    if uploaded_files and not st.session_state.pdfs_processed and groq_api_key:
+    if uploaded_files and not st.session_state.pdfs_processed:
         with st.spinner("Procesando PDFs..."):
             # Guardar archivos en ubicaciones temporales
             temp_files = []
@@ -121,8 +125,5 @@ if st.session_state.pdfs_processed:
         # Guardar respuesta
         st.session_state.messages.append({"role": "assistant", "content": response})
 else:
-    if not groq_api_key:
-        st.warning("Por favor, ingresa tu API key de Groq en la barra lateral.")
-    
     if not uploaded_files:
         st.info("Por favor, sube al menos un archivo PDF en la barra lateral para comenzar.")
