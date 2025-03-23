@@ -19,17 +19,18 @@ Mínimas dependencias: Mucho menos probable que tengas problemas de instalación
 Rápida instalación: No requiere compilación de paquetes complejos como FAISS
 Funcionalidad básica completa: Aún permite cargar PDFs y hacer preguntas sobre ellos
 
-Instrucciones de uso:
+##Instrucciones de uso:
 
 Crea un nuevo archivo ultra_simple_rag.py con el código proporcionado
 Crea un nuevo requirements.txt con el contenido del archivo requirements-ultra-minimal.txt
 Instala las dependencias:
-bashCopiarpip install -r requirements-ultra-minimal.txt
-
+´´´
+pip install -r requirements.txt
+´´´
 Ejecuta la aplicación:
-bashCopiarstreamlit run ultra_simple_rag.py
-
-
+´´´
+streamlit rag.py
+´´´
 Limitaciones:
 
 La búsqueda de documentos es básica (coincidencia de palabras clave) en lugar de semántica
